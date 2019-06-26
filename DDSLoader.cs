@@ -430,12 +430,20 @@ public class DDSLoader {
 
     public static Texture2D Load(string filename)
     {
-        // open file, return null if failed to open
-        FileStream fs = Utilj.FileOpen(filename, FileMode.Open, FileAccess.Read);
-        if (fs == null)
-        {
-            return null;
-        }
+		// open file, return null if failed to open
+		FileStream fs = null;
+		if (!File.Exists(filename))
+		{
+			return null;
+		}
+		try
+		{
+			fs = File.Open(filename, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+		}
+		catch
+		{
+			return null;
+		}
         fs.Seek(0, SeekOrigin.End);
         datare = new byte[fs.Position];
         fs.Seek(0, SeekOrigin.Begin);

@@ -53,8 +53,19 @@ public class BMPLoader {
 
 	static public Texture2D Load(string dir)
 	{
-		FileStream fs = Utilj.FileOpen(dir, FileMode.Open, FileAccess.Read);
-		if (fs == null) return null;
+		FileStream fs = null;
+		if (!File.Exists(dir))
+		{
+			return null;
+		}
+		try
+		{
+			fs = File.Open(dir, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+		}
+		catch
+		{
+			return null;
+		}
 		if (fs.Length < 54)
 		{
 			fs.Close();
