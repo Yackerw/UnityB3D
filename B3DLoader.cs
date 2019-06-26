@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System;
 using UnityEngine;
-using UnityEngine.Networking;
 
 public class B3DLoader : MonoBehaviour {
 
@@ -14,8 +13,6 @@ public class B3DLoader : MonoBehaviour {
         public int start;
         public BChunk parent;
         public List<BChunk> children;
-        //public BChunkData data;
-        //public dynamic data;
         public BTexData BTD;
         public BBrusData BBD;
         public BNodeData BND;
@@ -437,7 +434,6 @@ public class B3DLoader : MonoBehaviour {
    void FinishB3DLoad(string filename, bool vis, bool col, Vector3 pos, Vector3 scale, Vector3 rot, int rendLayer)
     {
         // textures
-        //string cutFileName = filename;
         byte[] fn = System.Text.Encoding.ASCII.GetBytes(filename);
         int i = fn.Length - 1;
         while (fn[i] != 0x2F && fn[i] != 0x5C)
@@ -473,9 +469,7 @@ public class B3DLoader : MonoBehaviour {
                 // cache textures
                 if (!textureCache.ContainsKey(newTexPath))
                 {
-                    //B83.Image.BMP.BMPLoader nbmp = new B83.Image.BMP.BMPLoader();
                     textureCache[newTexPath] = new TextureRefs();
-					//textureCache[newTexPath].tex = nbmp.LoadBMP(string.Concat(Application.dataPath, "/../", cutFileName, newTexPath)).ToTexture2D();
 					textureCache[newTexPath].tex = BMPLoader.Load(string.Concat(Application.dataPath, "/../", cutFileName, newTexPath));
                 }
                 tex[i] = textureCache[newTexPath].tex;
@@ -539,14 +533,7 @@ public class B3DLoader : MonoBehaviour {
                     mats[i] = new Material(Shader.Find("Unlit/Texture"));
                     matss.Add(mats[i]);
                 }
-                // cutout rendering
-                /*mats[i].SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.One);
-                mats[i].SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.Zero);
-                mats[i].SetInt("_ZWrite", 1);
-                mats[i].EnableKeyword("_ALPHATEST_ON");
-                mats[i].DisableKeyword("_ALPHABLEND_ON");
-                mats[i].DisableKeyword("_ALPHAPREMULTIPLY_ON");
-                mats[i].renderQueue = 2450;*/
+                // fade rendering iirc
                 if (brushes[0].SBD[i].a != 1.0f)
                 {
                     mats[i].SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
