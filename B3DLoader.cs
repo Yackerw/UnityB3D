@@ -243,7 +243,9 @@ public class B3DLoader : MonoBehaviour {
                     BND.scale.x = ReadFloat(fs);
                     BND.scale.y = ReadFloat(fs);
                     BND.scale.z = ReadFloat(fs);
+					// it's w x y z
                     BND.rot = new Quaternion(ReadFloat(fs), ReadFloat(fs), ReadFloat(fs), ReadFloat(fs));
+					BND.rot = new Quaternion(BND.rot.y, BND.rot.z, BND.rot.w, BND.rot.x);
                     // relative scale and position
                     if (chunk.parent.name == "NODE")
                     {
@@ -371,6 +373,7 @@ public class B3DLoader : MonoBehaviour {
     }
 
     // this nukes everything when ever any b3d is destroyed. since b3ds are usually only destroyed at stage end, though, i don't care.
+	// if you want to be able to destroy b3ds without destroying shared resources, just make textureCache non-static
     private void OnDestroy()
     {
         // free memory
@@ -392,7 +395,14 @@ public class B3DLoader : MonoBehaviour {
 
     public void LoadB3D(string filename, bool vis, bool col, Vector3 pos, Vector3 scale, Vector3 rot, int rendLayer = 0)
     {
-        FileStream fs = File.Open(filename, FileMode.Open, FileAccess.Read, FileShare.Read);
+		FileStream fs = null;
+		try
+		{
+			fs = File.Open(filename, FileMode.Open, FileAccess.Read, FileShare.Read);
+		} catch
+		{
+			return;
+		}
         BChunk main = new BChunk();
         main.start = 0;
         byte[] chunk = new byte[4];
@@ -654,8 +664,9 @@ public class B3DLoader : MonoBehaviour {
                 }
                 objs[i].transform.localScale = nodes[i].scale * 0.17f;
                 objs[i].transform.position = nodes[i].pos * 0.17f;
-                //objs[i].transform.rotation = nodes[i].rot;
-            }
+                objs[i].transform.rotation = nodes[i].rot;
+				objs[i].name = nodes[i].name;
+			}
             // invalid material, create a new mesh for each triangle group
             else
             {
@@ -709,7 +720,6 @@ public class B3DLoader : MonoBehaviour {
                 }
                 GameObject newobj = objs[i];
                 newobj.layer = rendLayer;
-                newobj.transform.parent = objs[i].transform;
                 meshs.Add(m);
                 MeshFilter mf = newobj.AddComponent<MeshFilter>();
                 mf.mesh = m;
@@ -727,7 +737,8 @@ public class B3DLoader : MonoBehaviour {
                 }
                 newobj.transform.localScale = nodes[i].scale * 0.17f;
                 newobj.transform.position = nodes[i].pos * 0.17f;
-                newobj.name = nodes[i].name;
+				newobj.transform.rotation = nodes[i].rot;
+				newobj.name = nodes[i].name;
             }
             i++;
         }
@@ -782,7 +793,7 @@ NODE:
 string name
 float position[3]
 float scale[3]
-float rotation[4]
+quat rotation (wxyz)
 MESH or BONE chunk
 optional KEYS chunk
 optional NODE chunk
