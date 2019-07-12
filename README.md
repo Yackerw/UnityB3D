@@ -6,4 +6,5 @@ Includes 3 scripts, written by myself. B3DLoader, DDSLoader, and BMPLoad.
 
 KNOWN ISSUES:
 TGA textures do not load. I've not written a TGA importer.
+
 Bones and animations do not import. Since this was designed for levels, these were not programmed.
