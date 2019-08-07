@@ -376,24 +376,33 @@ public class B3DLoader : MonoBehaviour {
 	// if you want to be able to destroy b3ds without destroying shared resources, just make textureCache non-static
     private void OnDestroy()
     {
-        // free memory
-        for (int i = 0; i < meshs.Count; i++)
-        {
-            Destroy(meshs[i]);
-        }
-        for (int i = 0; i < tex2ds.Count; i++)
-        {
-            Destroy(tex2ds[i]);
-        }
-        for (int i = 0; i < matss.Count; i++)
-        {
-            Destroy(matss[i]);
-        }
+		// free memory
+		if (meshs != null)
+		{
+			for (int i = 0; i < meshs.Count; i++)
+			{
+				Destroy(meshs[i]);
+			}
+		}
+		if (tex2ds != null)
+		{
+			for (int i = 0; i < tex2ds.Count; i++)
+			{
+				Destroy(tex2ds[i]);
+			}
+		}
+		if (matss != null)
+		{
+			for (int i = 0; i < matss.Count; i++)
+			{
+				Destroy(matss[i]);
+			}
+		}
         // nuke the cache
         textureCache = new Dictionary<string, TextureRefs>();
     }
 
-    public void LoadB3D(string filename, bool vis, bool col, Vector3 pos, Vector3 scale, Vector3 rot, int rendLayer = 0)
+    public void LoadB3D(string filename, bool vis, bool col, Vector3 pos, Vector3 scale, Vector3 rot, bool castShadows, int rendLayer = 0)
     {
 		FileStream fs = null;
 		try
@@ -437,18 +446,33 @@ public class B3DLoader : MonoBehaviour {
         // main loop
         ProcessChunk(main, fs);
 
-        FinishB3DLoad(filename, vis, col, pos, scale, rot, rendLayer);
+        FinishB3DLoad(filename, vis, col, pos, scale, rot, rendLayer, castShadows);
         return;
     }
+
+	void ApplyMask(Texture2D tex)
+	{
+		// if the texture is masked, set the alpha on black pixels
+		Color[] c = tex.GetPixels();
+		for (int i = 0; i < c.Length; ++i)
+		{
+			if (c[i].r <= 0.01f && c[i].g <= 0.01f && c[i].b <= 0.01f)
+			{
+				c[i].a = 0;
+			}
+		}
+		tex.SetPixels(c);
+		tex.Apply();
+	}
 	
-   void FinishB3DLoad(string filename, bool vis, bool col, Vector3 pos, Vector3 scale, Vector3 rot, int rendLayer)
+   void FinishB3DLoad(string filename, bool vis, bool col, Vector3 pos, Vector3 scale, Vector3 rot, int rendLayer, bool castShadows)
     {
         // textures
         byte[] fn = System.Text.Encoding.ASCII.GetBytes(filename);
         int i = fn.Length - 1;
         while (fn[i] != 0x2F && fn[i] != 0x5C)
         {
-            i--;
+			--i;
         }
         String cutFileName = filename.Substring(0, i);
         Texture2D[] tex = new Texture2D[0];
@@ -463,65 +487,83 @@ public class B3DLoader : MonoBehaviour {
             byte[] tfn = System.Text.Encoding.ASCII.GetBytes(texs[0].STD[i].name);
             int i2 = tfn.Length - 1;
             int start = tfn.Length;
-            while (tfn[i2] != 0x2F && tfn[i2] != 0x5C && i2 != 0)
+            while (i2 > 0 && tfn[i2] != 0x2F && tfn[i2] != 0x5C)
             {
                 i2--;
-            }
-            String newTexPath = texs[0].STD[i].name.Substring(i2, start - i2);
-            byte extn = tfn[tfn.Length - 3];
-            if (tfn[0] != 0x2F && tfn[0] != 0x5C)
-            {
-                newTexPath = string.Concat("/", newTexPath);
-            }
-            // get file extension
-            if (extn == 0x62 || extn == 0x42)
-            {
-                // cache textures
-                if (!textureCache.ContainsKey(newTexPath))
-                {
-                    textureCache[newTexPath] = new TextureRefs();
-					textureCache[newTexPath].tex = BMPLoader.Load(string.Concat(Application.dataPath, "/../", cutFileName, newTexPath));
-                }
-                tex[i] = textureCache[newTexPath].tex;
-                textureCache[newTexPath].refs++;
-            }
-            else if (extn == 0x64 || extn == 0x44)
-            {
-                // cache textures
-                if (!textureCache.ContainsKey(newTexPath))
-                {
-                    textureCache[newTexPath] = new TextureRefs();
-                    textureCache[newTexPath].tex = DDSLoader.Load(string.Concat(Application.dataPath, "/../", cutFileName, newTexPath));
-                }
-                tex[i] = textureCache[newTexPath].tex;
-                textureCache[newTexPath].refs++;
-            }
-            else
-            {
-                // cache textures
-                if (!textureCache.ContainsKey(newTexPath))
-                {
-                    textureCache[newTexPath] = new TextureRefs();
-                    textureCache[newTexPath].tex = new Texture2D(2, 2);
-                    FileStream img = null;
-                    try {
-                        img = File.Open(string.Concat(Application.dataPath, "/../", cutFileName, newTexPath), FileMode.Open);
-                    } catch
-                    {
-                        img = null;
-                    }
-                    if (img != null)
-                    {
-                        img.Seek(0, SeekOrigin.End);
-                        byte[] data = new byte[img.Position];
-                        img.Seek(0, SeekOrigin.Begin);
-                        img.Read(data, 0, data.Length);
-                        img.Close();
-                        textureCache[newTexPath].tex.LoadImage(data);
-                    }
-                }
-                tex[i] = textureCache[newTexPath].tex;
-            }
+			}
+			// ensure i2 - and therefor the texture name - are valid
+			if (i2 != -1)
+			{
+				String newTexPath = texs[0].STD[i].name.Substring(i2, start - i2);
+				byte extn = tfn[tfn.Length - 3];
+				if (tfn[0] != 0x2F && tfn[0] != 0x5C)
+				{
+					newTexPath = string.Concat("/", newTexPath);
+				}
+				// get file extension
+				if (extn == 0x62 || extn == 0x42)
+				{
+					// cache textures
+					if (!textureCache.ContainsKey(newTexPath))
+					{
+						textureCache[newTexPath] = new TextureRefs();
+						textureCache[newTexPath].tex = BMPLoader.Load(string.Concat(Application.dataPath, "/../", cutFileName, newTexPath));
+					}
+					tex[i] = textureCache[newTexPath].tex;
+					if ((texs[0].STD[i].flags & 4) != 0)
+					{
+						ApplyMask(tex[i]);
+					}
+					textureCache[newTexPath].refs++;
+				}
+				else if (extn == 0x64 || extn == 0x44)
+				{
+					// cache textures
+					if (!textureCache.ContainsKey(newTexPath))
+					{
+						textureCache[newTexPath] = new TextureRefs();
+						textureCache[newTexPath].tex = DDSLoader.Load(string.Concat(Application.dataPath, "/../", cutFileName, newTexPath));
+					}
+					tex[i] = textureCache[newTexPath].tex;
+					if ((texs[0].STD[i].flags & 4) != 0)
+					{
+						ApplyMask(tex[i]);
+					}
+					textureCache[newTexPath].refs++;
+				}
+				else
+				{
+					// cache textures
+					if (!textureCache.ContainsKey(newTexPath))
+					{
+						textureCache[newTexPath] = new TextureRefs();
+						textureCache[newTexPath].tex = new Texture2D(2, 2);
+						FileStream img = null;
+						try
+						{
+							img = File.Open(string.Concat(Application.dataPath, "/../", cutFileName, newTexPath), FileMode.Open);
+						}
+						catch
+						{
+							img = null;
+						}
+						if (img != null)
+						{
+							img.Seek(0, SeekOrigin.End);
+							byte[] data = new byte[img.Position];
+							img.Seek(0, SeekOrigin.Begin);
+							img.Read(data, 0, data.Length);
+							img.Close();
+							textureCache[newTexPath].tex.LoadImage(data);
+						}
+					}
+					tex[i] = textureCache[newTexPath].tex;
+					if ((texs[0].STD[i].flags & 4) != 0)
+					{
+						ApplyMask(tex[i]);
+					}
+				}
+			}
             i++;
         }
 
@@ -543,24 +585,43 @@ public class B3DLoader : MonoBehaviour {
                     mats[i] = new Material(Shader.Find("Unlit/Texture"));
                     matss.Add(mats[i]);
                 }
-                // fade rendering iirc
-                if (brushes[0].SBD[i].a != 1.0f)
+				SubBrusData SBD = brushes[0].SBD[i];
+				// fade rendering iirc
+				if (brushes[0].SBD[i].a != 1.0f || ((SBD.texture_id.Length != 0 && SBD.texture_id[0] != -1) && ((texs[0].STD[SBD.texture_id[0]].flags & 2) != 0 || (texs[0].STD[SBD.texture_id[0]].flags & 4) != 0)))
                 {
-                    mats[i].SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-                    mats[i].SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-                    mats[i].SetInt("_ZWrite", 0);
-                    mats[i].DisableKeyword("_ALPHATEST_ON");
-                    mats[i].EnableKeyword("_ALPHABLEND_ON");
-                    mats[i].DisableKeyword("_ALPHAPREMULTIPLY_ON");
-                    mats[i].renderQueue = 3000;
+					// if it's not masked, use fade. otherwise, use cutout
+					if ((SBD.texture_id.Length != 0 && SBD.texture_id[0] != -1) && (texs[0].STD[SBD.texture_id[0]].flags & 4) == 0)
+					{
+						mats[i].SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+						mats[i].SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+						mats[i].SetInt("_ZWrite", 0);
+						mats[i].DisableKeyword("_ALPHATEST_ON");
+						mats[i].EnableKeyword("_ALPHABLEND_ON");
+						mats[i].DisableKeyword("_ALPHAPREMULTIPLY_ON");
+						mats[i].renderQueue = 3000;
+					} else
+					{
+						mats[i].SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.One);
+						mats[i].SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.Zero);
+						mats[i].SetInt("_ZWrite", 1);
+						mats[i].EnableKeyword("_ALPHATEST_ON");
+						mats[i].DisableKeyword("_ALPHABLEND_ON");
+						mats[i].DisableKeyword("_ALPHAPREMULTIPLY_ON");
+						mats[i].renderQueue = 2450;
+					}
                 }
-                mats[i].SetColor("_Color", new Color(brushes[0].SBD[i].r, brushes[0].SBD[i].g, brushes[0].SBD[i].b, brushes[0].SBD[i].a));
-                SubBrusData SBD = brushes[0].SBD[i];
                 if (SBD.texture_id.Length != 0 && SBD.texture_id[0] != -1)
                 {
                     mats[i].mainTexture = tex[SBD.texture_id[0]];
                     mats[i].mainTextureScale = new Vector2(texs[0].STD[SBD.texture_id[0]].scale.x, -texs[0].STD[SBD.texture_id[0]].scale.y);
                     mats[i].mainTextureOffset = texs[0].STD[SBD.texture_id[0]].pos;
+					/*if (SBD.texture_id.Length > 1 && SBD.texture_id[1] != -1)
+					{
+						mats[i].EnableKeyword("_DETAIL_MULX2");
+						mats[i].SetTexture("_DetailAlbedoMap", tex[SBD.texture_id[1]]);
+						mats[i].SetTextureScale("_DetailAlbedoMap", new Vector2(texs[0].STD[SBD.texture_id[0]].scale.x, -texs[0].STD[SBD.texture_id[0]].scale.y));
+						mats[i].SetTextureOffset("_DetailAlbedoMap", texs[0].STD[SBD.texture_id[0]].pos);
+					}*/
                 }
                 else
                 {
@@ -582,6 +643,7 @@ public class B3DLoader : MonoBehaviour {
         i = 0;
         Vector3[] vertpos;
         Vector2[] uvs;
+		Vector2[] uvs2 = new Vector2[1];
         Vector3[] norms;
         while (i < nodes.Count)
         {
@@ -612,7 +674,12 @@ public class B3DLoader : MonoBehaviour {
                 // verts
                 vertpos = new Vector3[BVD.SVD.Count];
                 uvs = new Vector2[BVD.SVD.Count];
+				if (BVD.tex_coord_sets > 1)
+				{
+					uvs2 = new Vector2[BVD.SVD.Count];
+				}
                 norms = new Vector3[BVD.SVD.Count];
+				Color[] vcolors = new Color[BVD.SVD.Count];
 
                 int i2 = 0;
                 while (i2 < BVD.SVD.Count)
@@ -620,13 +687,24 @@ public class B3DLoader : MonoBehaviour {
                     vertpos[i2] = BVD.SVD[i2].pos;
                     uvs[i2].x = BVD.SVD[i2].Tex_Coords[0][0];
                     uvs[i2].y = BVD.SVD[i2].Tex_Coords[0][1];
+					if (BVD.tex_coord_sets > 1)
+					{
+						uvs2[i2].x = BVD.SVD[i2].Tex_Coords[1][0];
+						uvs2[i2].y = BVD.SVD[i2].Tex_Coords[1][1];
+					}
                     norms[i2] = BVD.SVD[i2].normal;
-                    i2++;
+					vcolors[i2] = new Color(BVD.SVD[i2].r, BVD.SVD[i2].g, BVD.SVD[i2].b, BVD.SVD[i2].a);
+					i2++;
                 }
 
                 m.vertices = vertpos;
                 m.uv = uvs;
+				if (BVD.tex_coord_sets > 1)
+				{
+					m.uv2 = uvs2;
+				}
                 m.normals = norms;
+				m.colors = vcolors;
 
                 // triangle indexes
                 List<int> inds = new List<int>();
@@ -653,8 +731,15 @@ public class B3DLoader : MonoBehaviour {
                 if (vis)
                 {
                     MeshRenderer mr = objs[i].AddComponent<MeshRenderer>();
-                    mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.TwoSided;
-                    mr.material = mats[BMD.brush_id];
+					if (castShadows)
+					{
+						mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.TwoSided;
+					}
+					else
+					{
+						mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+					}
+					mr.material = mats[BMD.brush_id];
                 }
                 if (col)
                 {
@@ -680,7 +765,12 @@ public class B3DLoader : MonoBehaviour {
                 // verts
                 vertpos = new Vector3[BVD.SVD.Count];
                 uvs = new Vector2[BVD.SVD.Count];
-                norms = new Vector3[BVD.SVD.Count];
+				if (BVD.tex_coord_sets > 1)
+				{
+					uvs2 = new Vector2[BVD.SVD.Count];
+				}
+				norms = new Vector3[BVD.SVD.Count];
+				Color[] vcolors = new Color[BVD.SVD.Count];
 
                 int i2 = 0;
                 while (i2 < BVD.SVD.Count)
@@ -688,7 +778,13 @@ public class B3DLoader : MonoBehaviour {
                     vertpos[i2] = BVD.SVD[i2].pos;
                     uvs[i2].x = BVD.SVD[i2].Tex_Coords[0][0];
                     uvs[i2].y = BVD.SVD[i2].Tex_Coords[0][1];
-                    norms[i2] = BVD.SVD[i2].normal;
+					if (BVD.tex_coord_sets > 1)
+					{
+						uvs2[i2].x = BVD.SVD[i2].Tex_Coords[1][0];
+						uvs2[i2].y = BVD.SVD[i2].Tex_Coords[1][1];
+					}
+					norms[i2] = BVD.SVD[i2].normal;
+					vcolors[i2] = new Color(BVD.SVD[i2].r, BVD.SVD[i2].g, BVD.SVD[i2].b, BVD.SVD[i2].a);
                     i2++;
                 }
 
@@ -701,7 +797,11 @@ public class B3DLoader : MonoBehaviour {
                 }
                 m.vertices = vertpos;
                 m.uv = uvs;
-                m.normals = norms;
+				if (BVD.tex_coord_sets > 1)
+				{
+					m.uv2 = uvs2;
+				}
+				m.colors = vcolors;
                 m.subMeshCount = BMD.tris.Count;
                 // create new material list
                 Material[] lmats = new Material[BMD.tris.Count];
@@ -718,7 +818,15 @@ public class B3DLoader : MonoBehaviour {
                     }
                     i2++;
                 }
-                GameObject newobj = objs[i];
+				if ((BVD.flags & 1) != 0)
+				{
+					m.normals = norms;
+				}
+				else
+				{
+					m.RecalculateNormals();
+				}
+				GameObject newobj = objs[i];
                 newobj.layer = rendLayer;
                 meshs.Add(m);
                 MeshFilter mf = newobj.AddComponent<MeshFilter>();
@@ -726,7 +834,13 @@ public class B3DLoader : MonoBehaviour {
                 if (vis)
                 {
                     MeshRenderer mr = newobj.AddComponent<MeshRenderer>();
-                    mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.TwoSided;
+					if (castShadows)
+					{
+						mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.TwoSided;
+					} else
+					{
+						mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+					}
                     mr.materials = lmats;
                 }
                 if (col)
@@ -770,8 +884,22 @@ all optional ^
 TEXS:
 {
 string texture file name
-int flags (??)
-int blend (??)
+int flags
+	color
+	alpha
+	masked
+	mipmap
+	clamp U
+	clamp V
+	spherical
+	cubic
+int blend
+		BLEND_REPLACE=	0,
+		BLEND_ALPHA=	1,
+		BLEND_MULTIPLY=	2,
+		BLEND_ADD=		3,
+		BLEND_DOT3=		4,
+		BLEND_MULTIPLY2=5,
 float x_pos, y_pos (x/y offsets i guess)
 float x_scale,y_scale (obvs)
 float rotation (rot in radians)
