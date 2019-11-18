@@ -6,6 +6,18 @@ using UnityEngine;
 
 public class B3DLoader : MonoBehaviour {
 
+	// default materials
+	public Material baseMat;
+	public Material baseTransMat;
+	public Material baseCutMat;
+
+	// if the model is set to be on this layer, it will be fullbright/unlit
+	const int skyBoxLayer = 12;
+
+
+	// size of animation
+	int animSize;
+
     class BChunk
     {
         public string name;
@@ -19,6 +31,8 @@ public class B3DLoader : MonoBehaviour {
         public BVertData BVD;
         public BTriData BTRD;
         public BMeshData BMD;
+		public BBoneData BBND;
+		public BKeysData BKD;
     }
 
     class BChunkData
@@ -62,7 +76,12 @@ public class B3DLoader : MonoBehaviour {
         public Vector3 pos;
         public Vector3 scale;
         public Quaternion rot;
-        public BChunk mesh; // could also be bone
+        public BChunk mesh;
+		public BChunk bone;
+		public BKeysData anim;
+		public BNodeData parent;
+		public int id;
+		public GameObject obj;
     }
 
     class BVertData : BChunkData
@@ -93,6 +112,23 @@ public class B3DLoader : MonoBehaviour {
         public List<BChunk> tris;
     }
 
+	class BBoneData : BChunkData
+	{
+		public List<int> vertex_id;
+		public List<float> weight;
+	}
+
+	class BKeysData : BChunkData
+	{
+		public int animFlags;
+		public bool[] usedFrameP;
+		public bool[] usedFrameR;
+		public bool[] usedFrameS;
+		public Vector3[] pos;
+		public Vector3[] scale;
+		public Quaternion[] rot;
+	}
+
     // texture cache
     class TextureRefs
     {
@@ -107,7 +143,40 @@ public class B3DLoader : MonoBehaviour {
     List<BTexData> texs;
     List<Mesh> meshs;
     List<Texture2D> tex2ds;
-    List<Material> matss;
+    public List<Material> matss;
+
+	string GetRelativePath(GameObject o)
+	{
+		List<GameObject> parents = new List<GameObject>();
+		GameObject curr = o;
+		while (curr.transform.parent != null)
+		{
+			parents.Add(curr);
+			curr = curr.transform.parent.gameObject;
+		}
+		string name = "";
+		for (int i = parents.Count - 1; i >= 0; --i)
+		{
+			if (i != parents.Count - 1)
+			{
+				name = name + "/" + parents[i].name;
+			} else
+			{
+				name = parents[i].name;
+			}
+		}
+		return name;
+	}
+
+	Vector3 flip(Vector3 v)
+	{
+		return new Vector3(v.x, v.z, v.y);
+	}
+
+	Quaternion flip(Quaternion q)
+	{
+		return new Quaternion(q.x, q.z, q.y, q.w);
+	}
 
     BChunk ReadChunk(BChunk parent, FileStream fs)
     {
@@ -161,17 +230,8 @@ public class B3DLoader : MonoBehaviour {
         return BitConverter.ToSingle(ret, 0);
     }
 
-    int its = 0;
-
     void ProcessChunk(BChunk chunk, FileStream fs)
     {
-        if (its > 100)
-        {
-           // return;
-        } else
-        {
-            its++;
-        }
         switch (chunk.name)
         {
             case "BB3D":
@@ -195,7 +255,7 @@ public class B3DLoader : MonoBehaviour {
                         STD.pos.x = ReadFloat(fs);
                         STD.pos.y = ReadFloat(fs);
                         STD.scale.x = ReadFloat(fs);
-                        STD.scale.y = ReadFloat(fs);
+                        STD.scale.y = -ReadFloat(fs);
                         STD.rot = ReadFloat(fs);
                         BTD.STD.Add(STD);
                     }
@@ -243,15 +303,19 @@ public class B3DLoader : MonoBehaviour {
                     BND.scale.x = ReadFloat(fs);
                     BND.scale.y = ReadFloat(fs);
                     BND.scale.z = ReadFloat(fs);
+					BND.pos = flip(BND.pos);
+					BND.scale = flip(BND.scale);
 					// it's w x y z
-                    BND.rot = new Quaternion(ReadFloat(fs), ReadFloat(fs), ReadFloat(fs), ReadFloat(fs));
-					BND.rot = new Quaternion(BND.rot.y, BND.rot.z, BND.rot.w, BND.rot.x);
+					float w = ReadFloat(fs);
+					float x = ReadFloat(fs);
+					float y = ReadFloat(fs);
+					float z = ReadFloat(fs);
+					BND.rot = new Quaternion(x, y, z, w).normalized;
+					BND.rot = flip(BND.rot);
                     // relative scale and position
                     if (chunk.parent.name == "NODE")
                     {
-                        BND.pos += chunk.parent.BND.pos;
-                        BND.scale = new Vector3(BND.scale.x * chunk.parent.BND.scale.x, BND.scale.y * chunk.parent.BND.scale.y, BND.scale.z * chunk.parent.BND.scale.z);
-                        BND.rot = chunk.parent.BND.rot * BND.rot;
+						BND.parent = chunk.parent.BND;
                     }
                     chunk.BND = BND;
                     while (fs.Position < chunk.start + chunk.length)
@@ -261,9 +325,22 @@ public class B3DLoader : MonoBehaviour {
                         {
                             BND.mesh = msh;
                         }
+						if (msh.name == "BONE")
+						{
+							BND.bone = msh;
+						}
+						if (msh.name == "KEYS")
+						{
+							// sorry nothing
+							/*if (BND.anim == null)
+							{
+								BND.anim = msh;
+							}*/
+						}
                     }
-                    // here you'd normally check for KEYS, NODE, and ANIM chunks. i'm gonna not, though, because no anim support
+                    // we're done here
                     nodes.Add(BND);
+					BND.id = nodes.Count;
                 }
                 break;
 
@@ -302,10 +379,10 @@ public class B3DLoader : MonoBehaviour {
                     while (fs.Position < chunk.start + chunk.length)
                     {
                         SubVertData SVD = new SubVertData();
-                        SVD.pos = new Vector3(ReadFloat(fs), ReadFloat(fs), ReadFloat(fs));
+                        SVD.pos = flip(new Vector3(ReadFloat(fs), ReadFloat(fs), ReadFloat(fs)));
                         if ((BVD.flags & 1) != 0)
                         {
-                            SVD.normal = new Vector3(ReadFloat(fs), ReadFloat(fs), ReadFloat(fs));
+                            SVD.normal = flip(new Vector3(ReadFloat(fs), ReadFloat(fs), ReadFloat(fs)));
                         } else
                         {
                             SVD.normal = Vector3.zero;
@@ -358,12 +435,106 @@ public class B3DLoader : MonoBehaviour {
                         BTD.tri_ind.Add(ReadInt(fs));
                         BTD.tri_ind.Add(ReadInt(fs));
                         BTD.tri_ind.Add(ReadInt(fs));
+						int tmp = BTD.tri_ind[BTD.tri_ind.Count - 1];
+						BTD.tri_ind[BTD.tri_ind.Count - 1] = BTD.tri_ind[BTD.tri_ind.Count - 2];
+						BTD.tri_ind[BTD.tri_ind.Count - 2] = tmp;
                     }
                     chunk.BTRD = BTD;
                 }
                 break;
 
-            // bones, keys, and anims aren't used!
+			case "BONE":
+				{
+					BBoneData BBD = new BBoneData();
+					BBD.vertex_id = new List<int>();
+					BBD.weight = new List<float>();
+					while (fs.Position < chunk.length + chunk.start)
+					{
+						BBD.vertex_id.Add(ReadInt(fs));
+						BBD.weight.Add(ReadFloat(fs));
+					}
+					chunk.BBND = BBD;
+				}
+				break;
+
+			case "KEYS":
+				{
+					BKeysData BKD;// = new BKeysData();
+					if (chunk.parent.BND.anim == null)
+					{
+						BKD = new BKeysData();
+						BKD.pos = new Vector3[0];
+						BKD.scale = new Vector3[0];
+						BKD.rot = new Quaternion[0];
+						BKD.usedFrameP = new bool[0];
+						BKD.usedFrameS = new bool[0];
+						BKD.usedFrameR = new bool[0];
+					} else
+					{
+						BKD = chunk.parent.BND.anim;
+					}
+					int lFlag = ReadInt(fs);
+					BKD.animFlags |= lFlag;
+					// we need to keep track of used frames separately for each anim type, as all KEYS chunks on a NODE are concatenated
+					while (fs.Position < chunk.length + chunk.start)
+					{
+						int frame = ReadInt(fs);
+						if ((lFlag & 1) != 0)
+						{
+							if (BKD.usedFrameP.Length <= frame)
+							{
+								Array.Resize(ref BKD.usedFrameP, frame + 1);
+							}
+							BKD.usedFrameP[frame] = true;
+							if (BKD.pos.Length <= frame)
+							{
+								Array.Resize(ref BKD.pos, frame + 1);
+							}
+							BKD.pos[frame] = flip(new Vector3(ReadFloat(fs), ReadFloat(fs), ReadFloat(fs)));
+						}
+						if ((lFlag & 2) != 0)
+						{
+							if (BKD.usedFrameS.Length <= frame)
+							{
+								Array.Resize(ref BKD.usedFrameS, frame + 1);
+							}
+							BKD.usedFrameS[frame] = true;
+							if (BKD.scale.Length <= frame)
+							{
+								Array.Resize(ref BKD.scale, frame + 1);
+							}
+							BKD.scale[frame] = flip(new Vector3(ReadFloat(fs), ReadFloat(fs), ReadFloat(fs)));
+						}
+						if ((lFlag & 4) != 0)
+						{
+							if (BKD.usedFrameR.Length <= frame)
+							{
+								Array.Resize(ref BKD.usedFrameR, frame + 1);
+							}
+							BKD.usedFrameR[frame] = true;
+							if (BKD.rot.Length <= frame)
+							{
+								Array.Resize(ref BKD.rot, frame + 1);
+							}
+							float w = ReadFloat(fs);
+							BKD.rot[frame] = flip(new Quaternion(ReadFloat(fs), ReadFloat(fs), ReadFloat(fs), w));
+						}
+					}
+					chunk.BKD = BKD;
+					chunk.parent.BND.anim = BKD;
+				}
+				break;
+
+			case "ANIM":
+				{
+					// so, this isn't correct - anims are actually supposed to be node specific, but that's incredibly dumb, no one ever uses them that way, and that'd just create an unreasonable number of animators
+					fs.Seek(4, SeekOrigin.Current);
+					animSize = Mathf.Max(animSize, ReadInt(fs));
+					fs.Seek(4, SeekOrigin.Current);
+				}
+				break;
+
+            // bones, keys, and anims are finally used. TODO: support the proprietary SEQS chunk?
             default:
                 {
                     fs.Seek(chunk.length + chunk.start, SeekOrigin.Begin);
@@ -450,8 +621,9 @@ public class B3DLoader : MonoBehaviour {
         return;
     }
 
-	void ApplyMask(Texture2D tex)
+	Texture2D ApplyMask(Texture2D tex)
 	{
+		Texture2D retTex = new Texture2D(tex.width, tex.height, TextureFormat.RGBA32, true);
 		// if the texture is masked, set the alpha on black pixels
 		Color[] c = tex.GetPixels();
 		for (int i = 0; i < c.Length; ++i)
@@ -461,35 +633,36 @@ public class B3DLoader : MonoBehaviour {
 				c[i].a = 0;
 			}
 		}
-		tex.SetPixels(c);
-		tex.Apply();
+		retTex.SetPixels(c);
+		retTex.Apply();
+		return retTex;
 	}
-	
-   void FinishB3DLoad(string filename, bool vis, bool col, Vector3 pos, Vector3 scale, Vector3 rot, int rendLayer, bool castShadows)
-    {
-        // textures
-        byte[] fn = System.Text.Encoding.ASCII.GetBytes(filename);
-        int i = fn.Length - 1;
-        while (fn[i] != 0x2F && fn[i] != 0x5C)
-        {
+
+	void FinishB3DLoad(string filename, bool vis, bool col, Vector3 pos, Vector3 scale, Vector3 rot, int rendLayer, bool castShadows)
+	{
+		// textures
+		byte[] fn = System.Text.Encoding.ASCII.GetBytes(filename);
+		int i = fn.Length - 1;
+		while (fn[i] != 0x2F && fn[i] != 0x5C)
+		{
 			--i;
-        }
-        String cutFileName = filename.Substring(0, i);
-        Texture2D[] tex = new Texture2D[0];
-        if (texs.Count != 0)
-        {
-            tex = new Texture2D[texs[0].STD.Count];
-        }
-        i = 0;
-        while (texs.Count != 0 && i < texs[0].STD.Count)
-        {
-            // strip directory from texture...
-            byte[] tfn = System.Text.Encoding.ASCII.GetBytes(texs[0].STD[i].name);
-            int i2 = tfn.Length - 1;
-            int start = tfn.Length;
-            while (i2 > 0 && tfn[i2] != 0x2F && tfn[i2] != 0x5C)
-            {
-                i2--;
+		}
+		String cutFileName = filename.Substring(0, i);
+		Texture2D[] tex = new Texture2D[0];
+		if (texs.Count != 0)
+		{
+			tex = new Texture2D[texs[0].STD.Count];
+		}
+		i = 0;
+		while (texs.Count != 0 && i < texs[0].STD.Count)
+		{
+			// strip directory from texture...
+			byte[] tfn = System.Text.Encoding.ASCII.GetBytes(texs[0].STD[i].name);
+			int i2 = tfn.Length - 1;
+			int start = tfn.Length;
+			while (i2 > 0 && tfn[i2] != 0x2F && tfn[i2] != 0x5C)
+			{
+				i2--;
 			}
 			// ensure i2 - and therefor the texture name - are valid
 			if (i2 != -1)
@@ -512,7 +685,7 @@ public class B3DLoader : MonoBehaviour {
 					tex[i] = textureCache[newTexPath].tex;
 					if ((texs[0].STD[i].flags & 4) != 0)
 					{
-						ApplyMask(tex[i]);
+						tex[i] = ApplyMask(tex[i]);
 					}
 					textureCache[newTexPath].refs++;
 				}
@@ -527,7 +700,7 @@ public class B3DLoader : MonoBehaviour {
 					tex[i] = textureCache[newTexPath].tex;
 					if ((texs[0].STD[i].flags & 4) != 0)
 					{
-						ApplyMask(tex[i]);
+						tex[i] = ApplyMask(tex[i]);
 					}
 					textureCache[newTexPath].refs++;
 				}
@@ -560,61 +733,74 @@ public class B3DLoader : MonoBehaviour {
 					tex[i] = textureCache[newTexPath].tex;
 					if ((texs[0].STD[i].flags & 4) != 0)
 					{
-						ApplyMask(tex[i]);
+						tex[i] = ApplyMask(tex[i]);
 					}
 				}
 			}
-            i++;
-        }
+			i++;
+		}
 
-        Material[] mats;
-        // brushes
-        if (brushes.Count != 0)
-        {
-            mats = new Material[brushes[0].SBD.Count];
-            i = 0;
-            while (i < brushes[0].SBD.Count)
-            {
-                if (rendLayer != 12)
-                {
-                    mats[i] = new Material(Shader.Find("Standard"));
-                    matss.Add(mats[i]);
-                }
-                else
-                {
-                    mats[i] = new Material(Shader.Find("Unlit/Texture"));
-                    matss.Add(mats[i]);
-                }
+		Material[] mats;
+		// brushes
+		if (brushes.Count != 0)
+		{
+			mats = new Material[brushes[0].SBD.Count];
+			i = 0;
+			while (i < brushes[0].SBD.Count)
+			{
+				if (rendLayer != skyBoxLayer)
+				{
+					//mats[i] = new Material(Shader.Find("Standard"));
+					mats[i] = new Material(baseMat);
+					matss.Add(mats[i]);
+				}
+				else
+				{
+					mats[i] = new Material(Shader.Find("Unlit/Texture"));
+					matss.Add(mats[i]);
+				}
 				SubBrusData SBD = brushes[0].SBD[i];
 				// fade rendering iirc
 				if (brushes[0].SBD[i].a != 1.0f || ((SBD.texture_id.Length != 0 && SBD.texture_id[0] != -1) && ((texs[0].STD[SBD.texture_id[0]].flags & 2) != 0 || (texs[0].STD[SBD.texture_id[0]].flags & 4) != 0)))
-                {
+				{
 					// if it's not masked, use fade. otherwise, use cutout
-					if ((SBD.texture_id.Length != 0 && SBD.texture_id[0] != -1) && (texs[0].STD[SBD.texture_id[0]].flags & 4) == 0)
+					if (((SBD.texture_id.Length != 0 && SBD.texture_id[0] != -1) && (texs[0].STD[SBD.texture_id[0]].flags & 4) == 0) || SBD.texture_id.Length == 0)
 					{
-						mats[i].SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+						/*mats[i].SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
 						mats[i].SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
 						mats[i].SetInt("_ZWrite", 0);
 						mats[i].DisableKeyword("_ALPHATEST_ON");
 						mats[i].EnableKeyword("_ALPHABLEND_ON");
 						mats[i].DisableKeyword("_ALPHAPREMULTIPLY_ON");
-						mats[i].renderQueue = 3000;
+						mats[i].renderQueue = 3000;*/
+						//mats[i].shader = baseTransMat.shader;
+						mats[i] = new Material(baseTransMat);
 					} else
 					{
-						mats[i].SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.One);
+						/*mats[i].SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.One);
 						mats[i].SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.Zero);
 						mats[i].SetInt("_ZWrite", 1);
 						mats[i].EnableKeyword("_ALPHATEST_ON");
 						mats[i].DisableKeyword("_ALPHABLEND_ON");
 						mats[i].DisableKeyword("_ALPHAPREMULTIPLY_ON");
-						mats[i].renderQueue = 2450;
+						mats[i].renderQueue = 2450;*/
+						//mats[i].shader = baseCutMat.shader;
+						mats[i] = new Material(baseCutMat);
+						mats[i].SetFloat("_Cutoff", 0.5f);
 					}
-                }
-                if (SBD.texture_id.Length != 0 && SBD.texture_id[0] != -1)
-                {
-                    mats[i].mainTexture = tex[SBD.texture_id[0]];
-                    mats[i].mainTextureScale = new Vector2(texs[0].STD[SBD.texture_id[0]].scale.x, -texs[0].STD[SBD.texture_id[0]].scale.y);
-                    mats[i].mainTextureOffset = texs[0].STD[SBD.texture_id[0]].pos;
+				}
+				if (SBD.texture_id.Length != 0 && SBD.texture_id[0] != -1)
+				{
+					int starti2 = 1;
+					if ((texs[0].STD[SBD.texture_id[0]].flags & 64) == 0)
+					{
+						mats[i].mainTexture = tex[SBD.texture_id[0]];
+						mats[i].mainTextureScale = texs[0].STD[SBD.texture_id[0]].scale;
+						mats[i].mainTextureOffset = texs[0].STD[SBD.texture_id[0]].pos;
+					} else
+					{
+						starti2 = 0;
+					}
 					/*if (SBD.texture_id.Length > 1 && SBD.texture_id[1] != -1)
 					{
 						mats[i].EnableKeyword("_DETAIL_MULX2");
@@ -622,149 +808,243 @@ public class B3DLoader : MonoBehaviour {
 						mats[i].SetTextureScale("_DetailAlbedoMap", new Vector2(texs[0].STD[SBD.texture_id[0]].scale.x, -texs[0].STD[SBD.texture_id[0]].scale.y));
 						mats[i].SetTextureOffset("_DetailAlbedoMap", texs[0].STD[SBD.texture_id[0]].pos);
 					}*/
-                }
-                else
-                {
-                    mats[i].mainTexture = null;
-                }
-                mats[i].SetFloat("_Glossiness", SBD.shininess);
-                mats[i].SetColor("_Color", new Color(SBD.r, SBD.g, SBD.b, SBD.a));
-                i++;
-            }
-        } else
-        {
-            // default mat
-            mats = new Material[1];
-            mats[0] = new Material(Shader.Find("Standard"));
-        }
-
-        // done, now make mesh
-        GameObject[] objs = new GameObject[nodes.Count];
-        i = 0;
-        Vector3[] vertpos;
-        Vector2[] uvs;
-		Vector2[] uvs2 = new Vector2[1];
-        Vector3[] norms;
-        while (i < nodes.Count)
-        {
-            if (nodes[i].mesh == null || nodes[i].mesh.name != "MESH")
-            {
-                i++;
-                continue;
-            }
-            BMeshData BMD = nodes[i].mesh.BMD;
-            // valid material, create single mesh
-            if (BMD.brush_id != -1)
-            {
-                Mesh m = new Mesh();
-
-                BVertData BVD = nodes[i].mesh.BVD;
-
-                if (BVD.SVD.Count > 65536)
-                {
-                    m.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
-                }
-
-                objs[i] = new GameObject();
-
-                objs[i].layer = rendLayer;
-
-                objs[i].transform.parent = gameObject.transform;
-
-                // verts
-                vertpos = new Vector3[BVD.SVD.Count];
-                uvs = new Vector2[BVD.SVD.Count];
-				if (BVD.tex_coord_sets > 1)
-				{
-					uvs2 = new Vector2[BVD.SVD.Count];
+					// get other maps
+					for (int i2 = starti2; i2 < SBD.texture_id.Length; ++i2)
+					{
+						if (SBD.texture_id[i2] != -1)
+						{
+							int fl = texs[0].STD[SBD.texture_id[i2]].flags;
+							int blendType = texs[0].STD[SBD.texture_id[i2]].blend;
+							// reject any textures that are ONLY "color"
+							if (fl != 1)
+							{
+								// check for sphere maps and blend type
+								if ((fl & 64) != 0)
+								{
+									switch (blendType)
+									{
+										case 3:
+											{
+												mats[i].SetTexture("_AddSphereMap", tex[SBD.texture_id[i2]]);
+												mats[i].EnableKeyword("ADDSPHERE_ON");
+											}
+											break;
+										case 2:
+											{
+												mats[i].SetTexture("_MulSphereMap", tex[SBD.texture_id[i2]]);
+												mats[i].EnableKeyword("MULSPHERE_ON");
+											}
+											break;
+									}
+								}
+								else
+								{
+									// TODO: check for cubemap lol
+									switch (blendType)
+									{
+										case 3:
+											{
+												mats[i].SetTexture("_AddTex", tex[SBD.texture_id[i2]]);
+												mats[i].EnableKeyword("ADDTEX_ON");
+												if (texs[0].STD[SBD.texture_id[i2]].scale != Vector2.one)
+												{
+													mats[i].SetTextureOffset("_AddTex", texs[0].STD[SBD.texture_id[i2]].pos);
+													mats[i].SetTextureScale("_AddTex", texs[0].STD[SBD.texture_id[i2]].scale);
+												}
+											}
+											break;
+										case 2:
+											{
+												mats[i].SetTexture("_MulTex", tex[SBD.texture_id[i2]]);
+												mats[i].EnableKeyword("MULTEX_ON");
+												if (texs[0].STD[SBD.texture_id[i2]].scale != Vector2.one)
+												{
+													mats[i].SetTextureOffset("_MulTex", texs[0].STD[SBD.texture_id[i2]].pos);
+													mats[i].SetTextureScale("_MulTex", texs[0].STD[SBD.texture_id[i2]].scale);
+												}
+											}
+											break;
+										case 5:
+											{
+												mats[i].SetTexture("_MulTex2", tex[SBD.texture_id[i2]]);
+												mats[i].EnableKeyword("MULTEX2_ON");
+												if (texs[0].STD[SBD.texture_id[i2]].scale != Vector2.one)
+												{
+													mats[i].SetTextureOffset("_MulTex2", texs[0].STD[SBD.texture_id[i2]].pos);
+													mats[i].SetTextureScale("_MulTex2", texs[0].STD[SBD.texture_id[i2]].scale);
+												}
+											}
+											break;
+									}
+								}
+							}
+						}
+					}
 				}
-                norms = new Vector3[BVD.SVD.Count];
-				Color[] vcolors = new Color[BVD.SVD.Count];
-
-                int i2 = 0;
-                while (i2 < BVD.SVD.Count)
-                {
-                    vertpos[i2] = BVD.SVD[i2].pos;
-                    uvs[i2].x = BVD.SVD[i2].Tex_Coords[0][0];
-                    uvs[i2].y = BVD.SVD[i2].Tex_Coords[0][1];
-					if (BVD.tex_coord_sets > 1)
-					{
-						uvs2[i2].x = BVD.SVD[i2].Tex_Coords[1][0];
-						uvs2[i2].y = BVD.SVD[i2].Tex_Coords[1][1];
-					}
-                    norms[i2] = BVD.SVD[i2].normal;
-					vcolors[i2] = new Color(BVD.SVD[i2].r, BVD.SVD[i2].g, BVD.SVD[i2].b, BVD.SVD[i2].a);
-					i2++;
-                }
-
-                m.vertices = vertpos;
-                m.uv = uvs;
-				if (BVD.tex_coord_sets > 1)
+				else
 				{
-					m.uv2 = uvs2;
+					mats[i].mainTexture = null;
 				}
-                m.normals = norms;
-				m.colors = vcolors;
-
-                // triangle indexes
-                List<int> inds = new List<int>();
-
-                i2 = 0;
-                while (i2 < BMD.tris.Count)
-                {
-                    BTriData BTD = BMD.tris[i2].BTRD;
-                    int i3 = 0;
-                    while (i3 < BTD.tri_ind.Count)
-                    {
-                        inds.Add(BTD.tri_ind[i3]);
-                        i3++;
-                    }
-                    i2++;
-                }
-
-                m.triangles = inds.ToArray();
-
-                meshs.Add(m);
-
-                MeshFilter mf = objs[i].AddComponent<MeshFilter>();
-                mf.mesh = m;
-                if (vis)
-                {
-                    MeshRenderer mr = objs[i].AddComponent<MeshRenderer>();
-					if (castShadows)
-					{
-						mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.TwoSided;
-					}
-					else
-					{
-						mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-					}
-					mr.material = mats[BMD.brush_id];
-                }
-                if (col)
-                {
-                    MeshCollider mc = objs[i].AddComponent<MeshCollider>();
-                    mc.sharedMesh = m;
-                    objs[i].AddComponent<CollisionCache>();
-                }
-                objs[i].transform.localScale = nodes[i].scale * 0.17f;
-                objs[i].transform.position = nodes[i].pos * 0.17f;
-                objs[i].transform.rotation = nodes[i].rot;
-				objs[i].name = nodes[i].name;
+				mats[i].SetFloat("_Glossiness", SBD.shininess);
+				if (SBD.shininess != 0f)
+				{
+					mats[i].EnableKeyword("SPEC_ON");
+				}
+				mats[i].SetColor("_Color", new Color(SBD.r, SBD.g, SBD.b, SBD.a));
+				i++;
 			}
-            // invalid material, create a new mesh for each triangle group
-            else
-            {
-                objs[i] = new GameObject();
+		} else
+		{
+			// default mat
+			mats = new Material[1];
+			mats[0] = new Material(Shader.Find("Standard"));
+		}
 
-                objs[i].layer = rendLayer;
+		// done, now make mesh
+		GameObject[] objs = new GameObject[nodes.Count];
+		i = nodes.Count - 1;
+		Vector3[] vertpos;
+		Vector2[] uvs;
+		Vector2[] uvs2 = new Vector2[1];
+		Vector3[] norms;
+		// store all the vertex weights and bones in separate lists for each mesh
+		BoneWeight[] vertWeights = new BoneWeight[1];
+		List<Transform> bones = new List<Transform>();
+		List<BoneWeight[]> vWeights = new List<BoneWeight[]>();
+		List<Transform[]> bons = new List<Transform[]>();
+		List<Matrix4x4> bindPoses = new List<Matrix4x4>();
+		List<Matrix4x4[]> binds = new List<Matrix4x4[]>();
+		List<BNodeData> boneParents = new List<BNodeData>();
+		bool inBone = false;
+		GameObject boneParent = new GameObject("Skeleton");
+		boneParent.transform.parent = gameObject.transform;
+		//boneParent.transform.rotation = Quaternion.Euler(90f, 0f, 0f) * Quaternion.Euler(0f, 180f, 0f);
+		//boneParent.transform.localScale = new Vector3(-1f, 1f, 1f);
+		bool bonesExist = false;
+		// create bones first since those are important to the rest of the mesh creation
+		while (i >= 0)
+		{
+			if (nodes[i].bone == null || nodes[i].bone.name != "BONE")
+			{
+				--i;
+				if (inBone)
+				{
+					inBone = false;
+					vWeights.Add(vertWeights);
+					vertWeights = new BoneWeight[1];
+					bons.Add(bones.ToArray());
+					bones.Clear();
+					binds.Add(bindPoses.ToArray());
+					bindPoses.Clear();
+				}
+				continue;
+			}
+			if (!inBone)
+			{
+				boneParents.Add(nodes[i].parent);
+			}
+			inBone = true;
+			bonesExist = true;
+			BBoneData BBND = nodes[i].bone.BBND;
+			for (int i2 = 0; i2 < BBND.vertex_id.Count; ++i2)
+			{
+				if (vertWeights.Length <= BBND.vertex_id[i2])
+				{
+					Array.Resize(ref vertWeights, BBND.vertex_id[i2] + 1);
+				}
+				if (vertWeights[BBND.vertex_id[i2]].weight0 == 0f)
+				{
+					vertWeights[BBND.vertex_id[i2]].weight0 = BBND.weight[i2];
+					vertWeights[BBND.vertex_id[i2]].boneIndex0 = bones.Count;
+				}
+				else if (vertWeights[BBND.vertex_id[i2]].weight1 == 0f)
+				{
+					vertWeights[BBND.vertex_id[i2]].weight1 = BBND.weight[i2];
+					vertWeights[BBND.vertex_id[i2]].boneIndex1 = bones.Count;
+				}
+				else if (vertWeights[BBND.vertex_id[i2]].weight2 == 0f)
+				{
+					vertWeights[BBND.vertex_id[i2]].weight2 = BBND.weight[i2];
+					vertWeights[BBND.vertex_id[i2]].boneIndex2 = bones.Count;
+				}
+				else if (vertWeights[BBND.vertex_id[i2]].weight3 == 0f)
+				{
+					vertWeights[BBND.vertex_id[i2]].weight3 = BBND.weight[i2];
+					vertWeights[BBND.vertex_id[i2]].boneIndex3 = bones.Count;
+				}
+			}
+			GameObject newBone = new GameObject();
+			newBone.name = nodes[i].name;
+			nodes[i].obj = newBone;
+			if (nodes[i].parent != null && nodes[i].parent.obj != null)
+			{
+				newBone.transform.parent = nodes[i].parent.obj.transform;
+			}
+			else
+			{
+				newBone.transform.parent = boneParent.transform;
+			}
+			newBone.transform.localPosition = nodes[i].pos;
+			newBone.transform.localRotation = nodes[i].rot;
+			newBone.transform.localScale = nodes[i].scale;
+			bindPoses.Add(newBone.transform.worldToLocalMatrix * transform.localToWorldMatrix);
+			bones.Add(newBone.transform);
+			--i;
+		}
+		if (inBone)
+		{
+			vWeights.Add(vertWeights);
+			bons.Add(bones.ToArray());
+			binds.Add(bindPoses.ToArray());
+		}
+		i = nodes.Count - 1;
+		while (i >= 0)
+		{
+			if (nodes[i].mesh == null || nodes[i].mesh.name != "MESH")
+			{
+				--i;
+				continue;
+			}
+			bool bonesExistUs = false;
+			BoneWeight[] bw = new BoneWeight[1];
+			Transform[] bon = new Transform[1];
+			Matrix4x4[] bind = new Matrix4x4[1];
+			if (bonesExist)
+			{
+				for (int i2 = 0; i2 < boneParents.Count; ++i2)
+				{
+					if (boneParents[i2] == nodes[i])
+					{
+						bonesExistUs = true;
+						bw = vWeights[i2];
+						bon = bons[i2];
+						bind = binds[i2];
+						i2 = boneParents.Count;
+					}
+				}
+			}
+			BMeshData BMD = nodes[i].mesh.BMD;
+			// valid material, create single mesh
+			if (BMD.brush_id != -1)
+			{
+				Mesh m = new Mesh();
 
-                objs[i].transform.parent = gameObject.transform;
+				BVertData BVD = nodes[i].mesh.BVD;
 
-                BVertData BVD = nodes[i].mesh.BVD;
-                // verts
-                vertpos = new Vector3[BVD.SVD.Count];
-                uvs = new Vector2[BVD.SVD.Count];
+				if (BVD.SVD.Count > 65536)
+				{
+					m.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+				}
+
+				objs[i] = new GameObject();
+
+				objs[i].layer = rendLayer;
+
+				objs[i].transform.parent = gameObject.transform;
+
+				// verts
+				vertpos = new Vector3[BVD.SVD.Count];
+				uvs = new Vector2[BVD.SVD.Count];
 				if (BVD.tex_coord_sets > 1)
 				{
 					uvs2 = new Vector2[BVD.SVD.Count];
@@ -772,12 +1052,12 @@ public class B3DLoader : MonoBehaviour {
 				norms = new Vector3[BVD.SVD.Count];
 				Color[] vcolors = new Color[BVD.SVD.Count];
 
-                int i2 = 0;
-                while (i2 < BVD.SVD.Count)
-                {
-                    vertpos[i2] = BVD.SVD[i2].pos;
-                    uvs[i2].x = BVD.SVD[i2].Tex_Coords[0][0];
-                    uvs[i2].y = BVD.SVD[i2].Tex_Coords[0][1];
+				int i2 = 0;
+				while (i2 < BVD.SVD.Count)
+				{
+					vertpos[i2] = BVD.SVD[i2].pos;
+					uvs[i2].x = BVD.SVD[i2].Tex_Coords[0][0];
+					uvs[i2].y = BVD.SVD[i2].Tex_Coords[0][1];
 					if (BVD.tex_coord_sets > 1)
 					{
 						uvs2[i2].x = BVD.SVD[i2].Tex_Coords[1][0];
@@ -785,39 +1065,193 @@ public class B3DLoader : MonoBehaviour {
 					}
 					norms[i2] = BVD.SVD[i2].normal;
 					vcolors[i2] = new Color(BVD.SVD[i2].r, BVD.SVD[i2].g, BVD.SVD[i2].b, BVD.SVD[i2].a);
-                    i2++;
-                }
+					i2++;
+				}
 
-                i2 = 0;
-
-                Mesh m = new Mesh();
-                if (vertpos.Length > 65536)
-                {
-                    m.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
-                }
-                m.vertices = vertpos;
-                m.uv = uvs;
+				m.vertices = vertpos;
+				m.uv = uvs;
 				if (BVD.tex_coord_sets > 1)
 				{
 					m.uv2 = uvs2;
+				} else
+				{
+					m.uv2 = uvs;
+				}
+				m.normals = norms;
+				m.colors = vcolors;
+
+				BoneWeight[] bw2;
+
+				if (bw.Length != BVD.SVD.Count)
+				{
+					bw2 = new BoneWeight[BVD.SVD.Count];
+					Array.Copy(bw, bw2, Mathf.Min(BVD.SVD.Count, bw.Length));
+				}
+				else
+				{
+					bw2 = bw;
+				}
+
+				if (bonesExistUs)
+				{
+					m.boneWeights = bw2;
+					m.bindposes = bind;
+				}
+
+				// triangle indexes
+				List<int> inds = new List<int>();
+
+				i2 = 0;
+				while (i2 < BMD.tris.Count)
+				{
+					BTriData BTD = BMD.tris[i2].BTRD;
+					int i3 = 0;
+					while (i3 < BTD.tri_ind.Count)
+					{
+						inds.Add(BTD.tri_ind[i3]);
+						i3++;
+					}
+					i2++;
+				}
+
+				m.triangles = inds.ToArray();
+
+				meshs.Add(m);
+
+				if (vis)
+				{
+					if (!bonesExistUs)
+					{
+						MeshFilter mf = objs[i].AddComponent<MeshFilter>();
+						mf.mesh = m;
+						MeshRenderer mr = objs[i].AddComponent<MeshRenderer>();
+						if (castShadows)
+						{
+							mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.TwoSided;
+						}
+						else
+						{
+							mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+						}
+						mr.material = mats[BMD.brush_id];
+					}
+					else
+					{
+						SkinnedMeshRenderer smr = objs[i].AddComponent<SkinnedMeshRenderer>();
+						if (castShadows)
+						{
+							smr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.TwoSided;
+						}
+						else
+						{
+							smr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+						}
+						smr.material = mats[BMD.brush_id];
+						smr.bones = bon;
+						smr.sharedMesh = m;
+					}
+				}
+				if (col)
+				{
+					MeshCollider mc = objs[i].AddComponent<MeshCollider>();
+					mc.sharedMesh = m;
+					objs[i].AddComponent<CollisionCache>();
+				}
+				objs[i].transform.parent = nodes[i].parent.obj.transform;
+				objs[i].transform.localScale = flip(nodes[i].scale * 0.17f);
+				objs[i].transform.localPosition = flip(nodes[i].pos * 0.17f);
+				objs[i].transform.localRotation = flip(nodes[i].rot);
+				nodes[i].obj = objs[i];
+				objs[i].name = nodes[i].name;
+			}
+			// invalid material, create a new mesh for each triangle group
+			else
+			{
+				objs[i] = new GameObject();
+
+				objs[i].layer = rendLayer;
+
+				objs[i].transform.parent = gameObject.transform;
+
+				BVertData BVD = nodes[i].mesh.BVD;
+				// verts
+				vertpos = new Vector3[BVD.SVD.Count];
+				uvs = new Vector2[BVD.SVD.Count];
+				if (BVD.tex_coord_sets > 1)
+				{
+					uvs2 = new Vector2[BVD.SVD.Count];
+				}
+				norms = new Vector3[BVD.SVD.Count];
+				Color[] vcolors = new Color[BVD.SVD.Count];
+
+				int i2 = 0;
+				while (i2 < BVD.SVD.Count)
+				{
+					vertpos[i2] = BVD.SVD[i2].pos;
+					uvs[i2].x = BVD.SVD[i2].Tex_Coords[0][0];
+					uvs[i2].y = BVD.SVD[i2].Tex_Coords[0][1];
+					if (BVD.tex_coord_sets > 1)
+					{
+						uvs2[i2].x = BVD.SVD[i2].Tex_Coords[1][0];
+						uvs2[i2].y = BVD.SVD[i2].Tex_Coords[1][1];
+					}
+					norms[i2] = BVD.SVD[i2].normal;
+					vcolors[i2] = new Color(BVD.SVD[i2].r, BVD.SVD[i2].g, BVD.SVD[i2].b, BVD.SVD[i2].a);
+					++i2;
+				}
+
+				i2 = 0;
+
+				Mesh m = new Mesh();
+				if (vertpos.Length > 65536)
+				{
+					m.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+				}
+				m.vertices = vertpos;
+				m.uv = uvs;
+				if (BVD.tex_coord_sets > 1)
+				{
+					m.uv2 = uvs2;
+				} else
+				{
+					m.uv2 = uvs;
 				}
 				m.colors = vcolors;
-                m.subMeshCount = BMD.tris.Count;
-                // create new material list
-                Material[] lmats = new Material[BMD.tris.Count];
-                while (i2 < BMD.tris.Count)
-                {
-                    BTriData BTD = BMD.tris[i2].BTRD;
-                    m.SetTriangles(BTD.tri_ind.ToArray(), i2);
-                    if (BTD.brush_id >= 0 && BTD.brush_id < mats.Length)
-                    {
-                        lmats[i2] = mats[BTD.brush_id];
-                    } else
-                    {
-                        lmats[i2] = new Material(Shader.Find("Standard"));
-                    }
-                    i2++;
-                }
+
+				BoneWeight[] bw2;
+
+				if (bw.Length != BVD.SVD.Count)
+				{
+					bw2 = new BoneWeight[BVD.SVD.Count];
+					Array.Copy(bw, bw2, Mathf.Min(BVD.SVD.Count, bw.Length));
+				} else
+				{
+					bw2 = bw;
+				}
+
+				// assign bone weights and bind pose
+				if (bonesExistUs)
+				{
+					m.boneWeights = bw2;
+					m.bindposes = bind;
+				}
+
+				m.subMeshCount = BMD.tris.Count;
+				// create new material list
+				Material[] lmats = new Material[BMD.tris.Count];
+				while (i2 < BMD.tris.Count)
+				{
+					BTriData BTD = BMD.tris[i2].BTRD;
+					m.SetTriangles(BTD.tri_ind.ToArray(), i2);
+					if (BTD.brush_id >= 0 && BTD.brush_id < mats.Length)
+					{
+						lmats[i2] = mats[BTD.brush_id];
+					} else
+					{
+						lmats[i2] = new Material(Shader.Find("Standard"));
+					}
+					i2++;
+				}
 				if ((BVD.flags & 1) != 0)
 				{
 					m.normals = norms;
@@ -827,38 +1261,154 @@ public class B3DLoader : MonoBehaviour {
 					m.RecalculateNormals();
 				}
 				GameObject newobj = objs[i];
-                newobj.layer = rendLayer;
-                meshs.Add(m);
-                MeshFilter mf = newobj.AddComponent<MeshFilter>();
-                mf.mesh = m;
-                if (vis)
-                {
-                    MeshRenderer mr = newobj.AddComponent<MeshRenderer>();
-					if (castShadows)
+				newobj.layer = rendLayer;
+				meshs.Add(m);
+				// generate mesh differently based on whether we're using an animated mesh or regular mesh
+				if (vis)
+				{
+					if (!bonesExistUs)
 					{
-						mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.TwoSided;
+						MeshFilter mf = newobj.AddComponent<MeshFilter>();
+						mf.mesh = m;
+						MeshRenderer mr = newobj.AddComponent<MeshRenderer>();
+						if (castShadows)
+						{
+							mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.TwoSided;
+						}
+						else
+						{
+							mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+						}
+						mr.materials = lmats;
 					} else
 					{
-						mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+						SkinnedMeshRenderer smr = newobj.AddComponent<SkinnedMeshRenderer>();
+						if (castShadows)
+						{
+							smr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.TwoSided;
+						} else
+						{
+							smr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+						}
+						smr.materials = lmats;
+						smr.bones = bon;
+						smr.sharedMesh = m;
 					}
-                    mr.materials = lmats;
-                }
-                if (col)
-                {
-                    MeshCollider mc = newobj.AddComponent<MeshCollider>();
-                    mc.sharedMesh = m;
-                    newobj.AddComponent<CollisionCache>();
-                }
-                newobj.transform.localScale = nodes[i].scale * 0.17f;
-                newobj.transform.position = nodes[i].pos * 0.17f;
-				newobj.transform.rotation = nodes[i].rot;
+				}
+				if (col)
+				{
+					MeshCollider mc = newobj.AddComponent<MeshCollider>();
+					mc.sharedMesh = m;
+					newobj.AddComponent<CollisionCache>();
+				}
+				if (nodes[i].parent != null && nodes[i].parent.obj != null)
+				{
+					newobj.transform.parent = nodes[i].parent.obj.transform;
+				} else
+				{
+					newobj.transform.parent = gameObject.transform;
+				}
+				newobj.transform.localScale = nodes[i].scale;
+				newobj.transform.localPosition = nodes[i].pos;
+				newobj.transform.localRotation = nodes[i].rot;
+				nodes[i].obj = newobj;
+				// ROTATE -90 x 180 y
 				newobj.name = nodes[i].name;
-            }
-            i++;
-        }
-        gameObject.transform.position = pos;
-        gameObject.transform.rotation = Quaternion.Euler(rot);
-        gameObject.transform.localScale = scale;
+			}
+			--i;
+		}
+
+		if (animSize > 0)
+		{
+			// one last time, iterate over all nodes to generate animation off of them
+			Animation anim = gameObject.AddComponent<Animation>();
+			AnimationClip clip = new AnimationClip();
+			clip.name = "Animation";
+			clip.legacy = true;
+
+			i = nodes.Count - 1;
+			while (i >= 0)
+			{
+				if (nodes[i].anim != null && nodes[i].obj != null)
+				{
+					BKeysData BKD = nodes[i].anim;
+					List<Keyframe> px = new List<Keyframe>();
+					List<Keyframe> py = new List<Keyframe>();
+					List<Keyframe> pz = new List<Keyframe>();
+					List<Keyframe> sx = new List<Keyframe>();
+					List<Keyframe> sy = new List<Keyframe>();
+					List<Keyframe> sz = new List<Keyframe>();
+					List<Keyframe> rx = new List<Keyframe>();
+					List<Keyframe> ry = new List<Keyframe>();
+					List<Keyframe> rz = new List<Keyframe>();
+					List<Keyframe> rw = new List<Keyframe>();
+
+					int len = Mathf.Max(BKD.rot.Length, BKD.pos.Length, BKD.scale.Length);
+
+					for (int i2 = 0; i2 < len; ++i2)
+					{
+						if ((BKD.animFlags & 1) != 0 && i2 < BKD.usedFrameP.Length && BKD.usedFrameP[i2])
+						{
+							px.Add(new Keyframe(i2 / 24f, BKD.pos[i2].x));
+							py.Add(new Keyframe(i2 / 24f, BKD.pos[i2].y));
+							pz.Add(new Keyframe(i2 / 24f, BKD.pos[i2].z));
+						}
+						if ((BKD.animFlags & 2) != 0 && i2 < BKD.usedFrameS.Length && BKD.usedFrameS[i2])
+						{
+							sx.Add(new Keyframe(i2 / 24f, BKD.scale[i2].x));
+							sy.Add(new Keyframe(i2 / 24f, BKD.scale[i2].y));
+							sz.Add(new Keyframe(i2 / 24f, BKD.scale[i2].z));
+						}
+						if ((BKD.animFlags & 4) != 0 && i2 < BKD.usedFrameR.Length && BKD.usedFrameR[i2])
+						{
+							rx.Add(new Keyframe(i2 / 24f, BKD.rot[i2].x));
+							ry.Add(new Keyframe(i2 / 24f, BKD.rot[i2].y));
+							rz.Add(new Keyframe(i2 / 24f, BKD.rot[i2].z));
+							rw.Add(new Keyframe(i2 / 24f, BKD.rot[i2].w));
+						}
+					}
+					AnimationCurve curve;
+					string name = GetRelativePath(nodes[i].obj);
+					if ((BKD.animFlags & 1) != 0)
+					{
+						curve = new AnimationCurve(px.ToArray());
+						clip.SetCurve(name, typeof(Transform), "localPosition.x", curve);
+						// end me
+						curve = new AnimationCurve(py.ToArray());
+						clip.SetCurve(name, typeof(Transform), "localPosition.y", curve);
+						curve = new AnimationCurve(pz.ToArray());
+						clip.SetCurve(name, typeof(Transform), "localPosition.z", curve);
+					}
+					if ((BKD.animFlags & 2) != 0)
+					{
+						curve = new AnimationCurve(sx.ToArray());
+						clip.SetCurve(name, typeof(Transform), "localScale.x", curve);
+						curve = new AnimationCurve(sy.ToArray());
+						clip.SetCurve(name, typeof(Transform), "localScale.y", curve);
+						curve = new AnimationCurve(sz.ToArray());
+						clip.SetCurve(name, typeof(Transform), "localScale.z", curve);
+					}
+					if ((BKD.animFlags & 4) != 0)
+					{
+						curve = new AnimationCurve(rx.ToArray());
+						clip.SetCurve(name, typeof(Transform), "localRotation.x", curve);
+						curve = new AnimationCurve(ry.ToArray());
+						clip.SetCurve(name, typeof(Transform), "localRotation.y", curve);
+						curve = new AnimationCurve(rz.ToArray());
+						clip.SetCurve(name, typeof(Transform), "localRotation.z", curve);
+						curve = new AnimationCurve(rw.ToArray());
+						clip.SetCurve(name, typeof(Transform), "localRotation.w", curve);
+					}
+				}
+				--i;
+			}
+			clip.wrapMode = WrapMode.Loop;
+			anim.AddClip(clip, clip.name);
+			anim.Play("Animation");
+		}
+		gameObject.transform.position = pos * 0.17f;
+        gameObject.transform.rotation = Quaternion.Euler(90f, 0f, 0f) * Quaternion.Euler(0f, 180f, 0f) * flip(Quaternion.Euler(rot));
+        gameObject.transform.localScale = new Vector3(-scale.x * 0.17f, scale.z * 0.17f, scale.y * 0.17f);
         // let's clear our nodes to free memory
         brushes = null;
         texs = null;
@@ -868,6 +1418,7 @@ public class B3DLoader : MonoBehaviour {
 
 /*
  * Documentation for future generations who wish to preserve this
+ * Y and Z are all reversed in all vectors and quaternions, and models scaled to -1 X
 B3D doc:
 chunks
 each chunk is:
@@ -952,7 +1503,7 @@ VRTS
 TRIS[x] (can be more than one TRIS chunk)
 the official implementation dictates that there's simply an array of chunks, and they can be VRTS OR TRIS, and multiple VRTS chunks would be concatenated together like TRIS chunks
 
-only writing bone related stuff here for preservation purposes
+repeat for length of bone
 BONE:
 {
 int vert_id (vertex affected by bone)
@@ -971,5 +1522,5 @@ float rotation[4] (for all these, refer to flags value)
 ANIM:
 int flags (unused lol)
 int frames (obvs)
-float fps (obvs)
+float fps (obvs, though actually unused in Blitz3D!)
  */
