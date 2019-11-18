@@ -944,8 +944,12 @@ public class B3DLoader : MonoBehaviour {
 				boneParents.Add(nodes[i].parent);
 			}
 			inBone = true;
-			bonesExist = true;
 			BBoneData BBND = nodes[i].bone.BBND;
+			Debug.Log(filename);
+			if (BBND.vertex_id.Count > 0)
+			{
+				bonesExist = true;
+			}
 			for (int i2 = 0; i2 < BBND.vertex_id.Count; ++i2)
 			{
 				if (vertWeights.Length <= BBND.vertex_id[i2])
@@ -1155,7 +1159,6 @@ public class B3DLoader : MonoBehaviour {
 				{
 					MeshCollider mc = objs[i].AddComponent<MeshCollider>();
 					mc.sharedMesh = m;
-					objs[i].AddComponent<CollisionCache>();
 				}
 				objs[i].transform.parent = nodes[i].parent.obj.transform;
 				objs[i].transform.localScale = flip(nodes[i].scale * 0.17f);
@@ -1299,7 +1302,6 @@ public class B3DLoader : MonoBehaviour {
 				{
 					MeshCollider mc = newobj.AddComponent<MeshCollider>();
 					mc.sharedMesh = m;
-					newobj.AddComponent<CollisionCache>();
 				}
 				if (nodes[i].parent != null && nodes[i].parent.obj != null)
 				{
