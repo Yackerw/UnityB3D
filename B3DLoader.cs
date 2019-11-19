@@ -945,7 +945,6 @@ public class B3DLoader : MonoBehaviour {
 			}
 			inBone = true;
 			BBoneData BBND = nodes[i].bone.BBND;
-			Debug.Log(filename);
 			if (BBND.vertex_id.Count > 0)
 			{
 				bonesExist = true;
