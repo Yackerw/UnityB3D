@@ -133,14 +133,6 @@
 					multiplicative *= tex2D(_MulSphereMap, reflcoords);
 	#endif
 	#endif
-					// also add the regular additive/multiplicative maps
-	#if ADDTEX_ON
-					additive += tex2D(_AddTex, i.uv);
-	#endif
-	#if MULTEX_ON
-					multiplicative *= tex2D(_MulTex, i.uv);
-	#endif
-
 					// apply our additive and multiplicative values now...
 #if ADDTEX_ON
 					additive += tex2D(_AddTex, TRANSFORM_TEX(i.uv2, _AddTex));
@@ -151,6 +143,13 @@
 #if MULTEX2_ON
 					multiplicative *= tex2D(_MulTex2, TRANSFORM_TEX(i.uv2, _MulTex2));
 #endif
+					// also add the regular additive/multiplicative maps
+#if MULTEX_ON
+					multiplicative *= tex2D(_MulTex, i.uv);
+#endif
+	#if ADDTEX_ON
+					additive += tex2D(_AddTex, i.uv);
+	#endif
 					col.rgb *= _Color;
 					return col;
 				}

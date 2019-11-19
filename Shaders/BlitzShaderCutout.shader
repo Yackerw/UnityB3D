@@ -144,11 +144,11 @@
 #endif
 
 					// apply our additive and multiplicative values now...
+#if MULTEX_ON || MULSPHERE_ON
+					col.rgb *= multiplicative;
+#endif
 	#if ADDTEX_ON || ADDSPHERE_ON
 					col.rgb += additive;
-	#endif
-	#if MULTEX_ON || MULSPHERE_ON
-					col.rgb *= multiplicative;
 	#endif
 					col.rgb *= _Color;
 					return col;
