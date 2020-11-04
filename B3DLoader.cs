@@ -57,7 +57,6 @@ public class B3DLoader : MonoBehaviour {
 
     class BBrusData : BChunkData
     {
-        public int texnum;
         public List<SubBrusData> SBD;
     }
 
@@ -243,9 +242,17 @@ public class B3DLoader : MonoBehaviour {
 
             case "TEXS":
                 {
-                    BTexData BTD = new BTexData();
-                    texs.Add(BTD);
-                    BTD.STD = new List<SubTexData>();
+					// ya this is dumb and hacky oh well
+					BTexData BTD;
+					if (texs.Count != 1)
+					{
+						BTD = new BTexData();
+						texs.Add(BTD);
+						BTD.STD = new List<SubTexData>();
+					} else
+					{
+						BTD = texs[0];
+					}
                     while (fs.Position < chunk.length + chunk.start)
                     {
                         SubTexData STD = new SubTexData();
@@ -265,10 +272,20 @@ public class B3DLoader : MonoBehaviour {
 
             case "BRUS":
                 {
-                    BBrusData BBD = new BBrusData();
-                    brushes.Add(BBD);
-                    BBD.texnum = ReadInt(fs);
-                    BBD.SBD = new List<SubBrusData>();
+					// same as texs, dumb and hacky
+					BBrusData BBD;
+					int currTexNum = ReadInt(fs);
+					if (brushes.Count != 1)
+					{
+						BBD = new BBrusData();
+						brushes.Add(BBD);
+						//BBD.texnum = ReadInt(fs);
+						BBD.SBD = new List<SubBrusData>();
+					} else
+					{
+						BBD = brushes[0];
+						//BBD.texnum += ReadInt(fs);
+					}
                     while (fs.Position < chunk.length + chunk.start)
                     {
                         SubBrusData SBD = new SubBrusData();
@@ -280,9 +297,9 @@ public class B3DLoader : MonoBehaviour {
                         SBD.shininess = ReadFloat(fs);
                         SBD.blend = ReadInt(fs);
                         SBD.fx = ReadInt(fs);
-                        SBD.texture_id = new int[BBD.texnum];
+                        SBD.texture_id = new int[currTexNum];
                         int i = 0;
-                        while (i < BBD.texnum)
+                        while (i < currTexNum)
                         {
                             SBD.texture_id[i] = ReadInt(fs);
                             i++;
@@ -667,9 +684,17 @@ public class B3DLoader : MonoBehaviour {
 			// ensure i2 - and therefor the texture name - are valid
 			if (i2 != -1)
 			{
-				String newTexPath = texs[0].STD[i].name.Substring(i2, start - i2);
+				String newTexPath;
+				// obliterate backslashes because they're bad
+				if (tfn[i2] == 0x5C)
+				{
+					newTexPath = texs[0].STD[i].name.Substring(i2 + 1, (start - i2) - 1);
+				} else
+				{
+					newTexPath = texs[0].STD[i].name.Substring(i2, start - i2);
+				}
 				byte extn = tfn[tfn.Length - 3];
-				if (tfn[0] != 0x2F && tfn[0] != 0x5C)
+				if (tfn[i2] != 0x2F)
 				{
 					newTexPath = string.Concat("/", newTexPath);
 				}
@@ -1350,22 +1375,22 @@ public class B3DLoader : MonoBehaviour {
 					{
 						if ((BKD.animFlags & 1) != 0 && i2 < BKD.usedFrameP.Length && BKD.usedFrameP[i2])
 						{
-							px.Add(new Keyframe(i2 / 24f, BKD.pos[i2].x));
-							py.Add(new Keyframe(i2 / 24f, BKD.pos[i2].y));
-							pz.Add(new Keyframe(i2 / 24f, BKD.pos[i2].z));
+							px.Add(new Keyframe(i2 / 24f, BKD.pos[i2].x, 0, 0, 0, 0));
+							py.Add(new Keyframe(i2 / 24f, BKD.pos[i2].y, 0, 0, 0, 0));
+							pz.Add(new Keyframe(i2 / 24f, BKD.pos[i2].z, 0, 0, 0, 0));
 						}
 						if ((BKD.animFlags & 2) != 0 && i2 < BKD.usedFrameS.Length && BKD.usedFrameS[i2])
 						{
-							sx.Add(new Keyframe(i2 / 24f, BKD.scale[i2].x));
-							sy.Add(new Keyframe(i2 / 24f, BKD.scale[i2].y));
-							sz.Add(new Keyframe(i2 / 24f, BKD.scale[i2].z));
+							sx.Add(new Keyframe(i2 / 24f, BKD.scale[i2].x, 0, 0, 0, 0));
+							sy.Add(new Keyframe(i2 / 24f, BKD.scale[i2].y, 0, 0, 0, 0));
+							sz.Add(new Keyframe(i2 / 24f, BKD.scale[i2].z, 0, 0, 0, 0));
 						}
 						if ((BKD.animFlags & 4) != 0 && i2 < BKD.usedFrameR.Length && BKD.usedFrameR[i2])
 						{
-							rx.Add(new Keyframe(i2 / 24f, BKD.rot[i2].x));
-							ry.Add(new Keyframe(i2 / 24f, BKD.rot[i2].y));
-							rz.Add(new Keyframe(i2 / 24f, BKD.rot[i2].z));
-							rw.Add(new Keyframe(i2 / 24f, BKD.rot[i2].w));
+							rx.Add(new Keyframe(i2 / 24f, BKD.rot[i2].x, 0, 0, 0, 0));
+							ry.Add(new Keyframe(i2 / 24f, BKD.rot[i2].y, 0, 0, 0, 0));
+							rz.Add(new Keyframe(i2 / 24f, BKD.rot[i2].z, 0, 0, 0, 0));
+							rw.Add(new Keyframe(i2 / 24f, BKD.rot[i2].w, 0, 0, 0, 0));
 						}
 					}
 					AnimationCurve curve;
@@ -1405,7 +1430,8 @@ public class B3DLoader : MonoBehaviour {
 			}
 			clip.wrapMode = WrapMode.Loop;
 			anim.AddClip(clip, clip.name);
-			anim.Play("Animation");
+			anim.clip = clip;
+			anim.Play();
 		}
 		gameObject.transform.position = pos * 0.17f;
         gameObject.transform.rotation = Quaternion.Euler(90f, 0f, 0f) * Quaternion.Euler(0f, 180f, 0f) * flip(Quaternion.Euler(rot));

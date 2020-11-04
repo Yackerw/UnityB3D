@@ -27,6 +27,7 @@
 			#pragma multi_compile_fwdadd_fullshadows
 #include "Lighting.cginc"
 #include "AutoLight.cginc"
+#include "Assets/Shaders/include/Blitz.cginc"
 
 #pragma multi_compile __ ADDTEX_ON
 #pragma multi_compile __ MULTEX_ON
@@ -34,19 +35,7 @@
 #pragma multi_compile __ MULSPHERE_ON
 #pragma multi_compile __ SPEC_ON
 #pragma multi_compile __ MULTEX2_ON
-
-			struct v2f
-			{
-				float2 uv : TEXCOORD0;
-				float2 uv2 : TEXCOORD3;
-				float4 pos : SV_POSITION;
-				float3 worldNormal : NORMAL;
-				float3 ambient : COLOR1;
-#if ADDSPHERE_ON || MULSPHERE_ON
-				float3 worldPos : TEXCOORD2;
-#endif
-				SHADOW_COORDS(1)
-			};
+#pragma multi_compile HIGH_QUALITY MED_QUALITY
 
 			sampler2D _MainTex;
 			sampler2D _AddTex;
@@ -63,92 +52,65 @@
 			
 			v2f vert (appdata_full v)
 			{
-				v2f o;
-				o.pos = UnityObjectToClipPos(v.vertex);
-				o.worldNormal = normalize(mul(v.normal.xyz, (float3x3) unity_WorldToObject));
-				o.uv = TRANSFORM_TEX(v.texcoord, _MainTex);
-				o.uv2 = v.texcoord1;
-				o.ambient = ShadeSH9(half4(o.worldNormal, 1));
-#if ADDSPHERE_ON || MULSPHERE_ON
-				o.worldPos = mul(unity_ObjectToWorld, v.vertex);
+#if HIGH_QUALITY
+				v2f o = vertFunc(v, _Color);
 #endif
-				TRANSFER_SHADOW(o)
+
+
+#if MED_QUALITY
+				v2f o = vertFunc(v
+#if SPEC_ON
+					, _Glossiness
+#endif
+				);
+#endif
+				o.uv = TRANSFORM_TEX(v.texcoord, _MainTex);
 				return o;
 			}
 			
 			fixed4 frag (v2f i) : SV_Target
 			{
-				float atten = SHADOW_ATTENUATION(i);
-				float lightFace = 0.0;
-#if SPEC_ON
-				// specular too
-				float3 SR;
-#endif
-				if (_WorldSpaceLightPos0.w < 0.5f) { // directional light
-					lightFace = dot(i.worldNormal, _WorldSpaceLightPos0.xyz);
-#if SPEC_ON
-					SR = reflect(_WorldSpaceLightPos0.xyz, i.worldNormal);
-#endif
-				}
-				else { // point light
-					lightFace = normalize(UnityObjectToClipPos(_WorldSpaceLightPos0.xyz) - i.pos);
-#if SPEC_ON
-					SR = reflect(lightFace, i.worldNormal);
-#endif
-				}
-				// sample the texture
-				fixed4 col = tex2D(_MainTex, i.uv);
-				// apply lighting
-				col.rgb *= ((_LightColor0.rgb * max(0, lightFace) * atten) + i.ambient);
-				// specular
-#if SPEC_ON
-				float3 E = normalize(mul((float3x3)unity_CameraToWorld, float3(0, 0, 1)));
-
-				float specAmnt = clamp(dot(E, SR), 0, 1);
-				col.rgb += _LightColor0.rgb * max(0, lightFace) * atten * pow(specAmnt,5) * _Glossiness;
-#endif
-
-#if ADDSPHERE_ON || ADDTEX_ON
-				float3 additive = { 0, 0, 0 };
-#endif
-#if MULSPHERE_ON || MULTEX_ON || MULTEX2_ON
-				float3 multiplicative = { 1, 1, 1 };
-#endif
-
-#if ADDSPHERE_ON || MULSPHERE_ON
-				// calculate reflections
-				float3 r = reflect(normalize(i.worldPos - _WorldSpaceCameraPos), i.worldNormal);
-				float m = 2.0 * sqrt(r.x*r.x + r.y*r.y + (r.z + 1.0)*(r.z + 1.0));
-				float2 reflcoords;
-				reflcoords.x = r.x / m + 0.5;
-				reflcoords.y = r.y / m + 0.5;
-#if ADDSPHERE_ON
-				additive += tex2D(_AddSphereMap, reflcoords);
-#endif
-#if MULSPHERE_ON
-				multiplicative *= tex2D(_MulSphereMap, reflcoords);
-#endif
-#endif
-				// also add the regular additive/multiplicative maps
+#if HIGH_QUALITY
+				return fragFunc(i, _MainTex
 #if ADDTEX_ON
-				additive += tex2D(_AddTex, TRANSFORM_TEX(i.uv2, _AddTex));
+				,_AddTex, _AddTex_ST
 #endif
 #if MULTEX_ON
-				multiplicative *= tex2D(_MulTex, TRANSFORM_TEX(i.uv2, _MulTex));
+					, _MulTex, _MulTex_ST
 #endif
 #if MULTEX2_ON
-				multiplicative *= tex2D(_MulTex2, TRANSFORM_TEX(i.uv2, _MulTex2));
+					, _MulTex2, _MulTex2_ST
 #endif
-
-				// apply our additive and multiplicative values now...
-#if MULTEX_ON || MULSPHERE_ON || MULTEX2_ON
-				col.rgb *= multiplicative;
+#if ADDSPHERE_ON
+					, _AddSphereMap
 #endif
-#if ADDTEX_ON || ADDSPHERE_ON
-				col.rgb += additive;
+#if MULSPHERE_ON
+					, _MulSphereMap
 #endif
-				col.rgb *= _Color;
-				return col;
+#if SPEC_ON
+					, _Glossiness
+#endif
+				);
+#endif
+#if MED_QUALITY
+			return fragFunc(i, _MainTex, _Color
+#if ADDTEX_ON
+				, _AddTex, _AddTex_ST
+#endif
+#if MULTEX_ON
+				, _MulTex, _MulTex_ST
+#endif
+#if MULTEX2_ON
+				, _MulTex2, _MulTex2_ST
+#endif
+#if ADDSPHERE_ON
+				, _AddSphereMap
+#endif
+#if MULSPHERE_ON
+				, _MulSphereMap
+#endif
+			);
+#endif
 			}
 			ENDCG
 		}
