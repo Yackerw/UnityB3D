@@ -7,3 +7,5 @@ Includes 3 scripts and some shaders, all written by myself. Even imports rigging
 KNOWN ISSUES:
 
 TGA textures do not load. I've not written a TGA importer.
+
+Using with Gamma color space will result in messed up colors. This is because the shader simulates a gamma color space in linear mode; you will have to remove some instances of "pow" near the end of the fragment code.
